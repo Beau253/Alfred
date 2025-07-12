@@ -1,0 +1,27 @@
+# requirements.txt
+
+# Discord Bot Core
+# Using a recent stable version of discord.py
+discord.py==2.4.0
+
+# Configuration Management
+# For loading variables from the .env file
+python-dotenv==1.0.1
+
+# AI Integration
+# The official Google library for the Gemini API
+google-generativeai==0.7.1
+
+# Web Server (API)
+# The core web framework
+Flask==3.0.3
+
+# Production WSGI Server for Flask
+# A simple, production-ready server
+waitress==3.0.0
+
+# Database ORM and Driver
+# The core ORM library
+SQLAlchemy==2.0.31
+# Driver for connecting to PostgreSQL databases
+psycopg2-binary==2.9.9
