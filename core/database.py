@@ -1,5 +1,6 @@
 # core/database.py
 
+import asyncpg
 import logging
 from sqlalchemy import (
     create_engine,
