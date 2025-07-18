@@ -2,7 +2,7 @@
 
 import logging
 import discord
-import os # <-- Added this import
+import os
 from pathlib import Path
 import asyncio
 from hypercorn.config import Config
@@ -24,11 +24,21 @@ class AlfredBot(discord.Bot):
         intents.members = True
         intents.message_content = True
 
-        super().__init__(*args, intents=intents, debug_guilds=DEBUG_GUILDS, **kwargs)
+        # We pass auto_sync_commands=False because we are handling the sync manually
+        super().__init__(
+            *args, 
+            intents=intents, 
+            debug_guilds=DEBUG_GUILDS, 
+            auto_sync_commands=False,  # Add this line
+            **kwargs
+        )
 
         logger.info("AlfredBot class is initializing.")
         self.db_manager = DatabaseManager()
-        self.ai_handler = AIHandler(self.db_manager) # Pass the db_manager to the AI handler
+        self.ai_handler = AIHandler(self.db_manager)
+
+        # Flag to ensure setup runs only once
+        self.is_setup_complete = False
 
         flask_app.bot = self
 
@@ -43,54 +53,10 @@ class AlfredBot(discord.Bot):
         except Exception as e:
             logger.critical(f"API server crashed with an exception: {e}", exc_info=True)
 
-    async def setup_hook(self) -> None:
-        """The guaranteed entry point for all async setup."""
-        logger.info("--- [SETUP HOOK] Starting guaranteed async setup ---")
-
-        # Step 1: Start the API server as a background task
-        logger.info("[SETUP HOOK] Step 1: Starting API Server in background...")
-        self.api_task = self.loop.create_task(self.start_api_server())
-        
-        # Step 2: Initialize the Database Manager
-        logger.info("[SETUP HOOK] Step 2: Initializing Database Manager...")
-        await self.db_manager.initialize()
-        logger.info("[SETUP HOOK] ✅ Database Manager Initialized.")
-
-        # Step 3: Load all cogs
-        logger.info("[SETUP HOOK] Step 3: Loading Cogs...")
-        cogs_loaded = 0
-        for filename in os.listdir(COGS_DIR):
-            if filename.endswith(".py") and not filename.startswith("_"):
-                cog_name = f"cogs.{filename[:-3]}"
-                try:
-                    self.load_extension(f"cogs.{filename[:-3]}")
-                    logger.info(f"  -> ✅ Successfully loaded cog: {cog_name}")
-                    cogs_loaded += 1
-                except Exception as e:
-                    logger.error(f"  -> ❌ Failed to load cog: {cog_name}", exc_info=True)
-        logger.info(f"[SETUP HOOK] ✅ Cog loading complete. {cogs_loaded} cogs loaded.")
-        
-        logger.info("[SETUP HOOK] Step 4: Forcibly syncing command tree to debug guild...")
-        try:
-            guild_obj = discord.Object(id=DEBUG_GUILDS[0])
-            # This line ensures any global commands are also made available to the debug guild
-            self.tree.copy_global_to(guild=guild_obj)
-            # This is the explicit sync command
-            synced_commands = await self.tree.sync(guild=guild_obj)
-            
-            # This new log is the most important one. It will tell us if the sync was successful.
-            logger.info(f"[SETUP HOOK] ✅ COMMANDS SYNCED: {len(synced_commands)} commands registered to guild {DEBUG_GUILDS[0]}.")
-            for command in synced_commands:
-                 logger.info(f"    -> Synced command: '{command.name}'")
-
-        except Exception as e:
-            logger.critical(f"[SETUP HOOK] ❌ FAILED TO SYNC COMMANDS: {e}", exc_info=True)
-        
-        logger.info("--- [SETUP HOOK] Finished ---")
-
     async def on_ready(self) -> None:
         """
         Called when the bot is fully connected and ready.
+        Contains the one-time setup logic, moved from setup_hook.
         """
         # Pass the bot's user ID to the AI handler now that we know it.
         self.ai_handler.set_bot_user_id(self.user.id)
@@ -99,9 +65,56 @@ class AlfredBot(discord.Bot):
         logger.info(f"Alfred is online. Logged in as {self.user.name} (ID: {self.user.id})")
         logger.info("="*50)
 
+        # --- ONE-TIME SETUP LOGIC ---
+        if not self.is_setup_complete:
+            logger.info("--- [ON_READY] Starting one-time setup ---")
+
+            # Step 1: Start the API server as a background task
+            logger.info("[ON_READY] Step 1: Starting API Server in background...")
+            self.api_task = self.loop.create_task(self.start_api_server())
+            
+            # Step 2: Initialize the Database Manager
+            logger.info("[ON_READY] Step 2: Initializing Database Manager...")
+            await self.db_manager.initialize()
+            logger.info("[ON_READY] ✅ Database Manager Initialized.")
+
+            # Step 3: Load all cogs
+            logger.info("[ON_READY] Step 3: Loading Cogs...")
+            cogs_loaded = 0
+            for filename in os.listdir(COGS_DIR):
+                if filename.endswith(".py") and not filename.startswith("_"):
+                    cog_name = f"cogs.{filename[:-3]}"
+                    try:
+                        self.load_extension(f"cogs.{filename[:-3]}")
+                        logger.info(f"  -> ✅ Successfully loaded cog: {cog_name}")
+                        cogs_loaded += 1
+                    except Exception as e:
+                        logger.error(f"  -> ❌ Failed to load cog: {cog_name}", exc_info=True)
+            logger.info(f"[ON_READY] ✅ Cog loading complete. {cogs_loaded} cogs loaded.")
+            
+            # Step 4: Forcibly syncing command tree to debug guild
+            logger.info("[ON_READY] Step 4: Forcibly syncing command tree to debug guild...")
+            try:
+                guild_obj = discord.Object(id=DEBUG_GUILDS[0])
+                self.tree.copy_global_to(guild=guild_obj)
+                synced_commands = await self.tree.sync(guild=guild_obj)
+                
+                logger.info(f"[ON_READY] ✅ COMMANDS SYNCED: {len(synced_commands)} commands registered to guild {DEBUG_GUILDS[0]}.")
+                for command in synced_commands:
+                     logger.info(f"    -> Synced command: '{command.name}'")
+
+            except Exception as e:
+                logger.critical(f"[ON_READY] ❌ FAILED TO SYNC COMMANDS: {e}", exc_info=True)
+            
+            self.is_setup_complete = True
+            logger.info("--- [ON_READY] One-time setup finished ---")
+
+
     async def close(self):
         """Custom close method to gracefully shut down services."""
         logger.info("Closing bot and services...")
+        if hasattr(self, 'api_task') and not self.api_task.done():
+            self.api_task.cancel()
         if self.db_manager and self.db_manager.is_initialized:
             await self.db_manager.close()
         await super().close()
