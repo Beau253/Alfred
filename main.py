@@ -9,8 +9,13 @@ from hypercorn.asyncio import serve
 log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
 file_handler = logging.FileHandler("alfred.log")
 file_handler.setFormatter(log_formatter)
+
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(log_formatter)
+
 logger.addHandler(console_handler) # This was a typo, should be console_handler
 
 # --- Application Imports ---
