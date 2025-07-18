@@ -15,8 +15,7 @@ file_handler.setFormatter(log_formatter)
 
 console_handler = logging.StreamHandler()
 console_handler.setFormatter(log_formatter)
-
-logger.addHandler(console_handler) # This was a typo, should be console_handler
+logger.addHandler(console_handler)
 
 # --- Application Imports ---
 from core.bot import AlfredBot
@@ -42,6 +41,10 @@ async def main():
     # Create tasks for both the bot and the API server
     # We pass the bot instance to the Flask app *before* starting the tasks
     flask_app.bot = bot
+
+    api_task = asyncio.create_task(
+        serve(flask_app, config, shutdown_trigger=lambda: shutdown_event.wait())
+    )
     
     api_task = asyncio.create_task(serve(flask_app, config, shutdown_trigger=shutdown_trigger.set))
     bot_task = asyncio.create_task(bot.start(settings.DISCORD_BOT_TOKEN))
