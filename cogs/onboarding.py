@@ -2,20 +2,20 @@
 
 import logging
 import discord
-from discord.commands import slash_command
+from discord.commands import slash_command, ApplicationContext
 from discord.ext import commands
 import json
 from pathlib import Path
-from core.database import AsyncSessionLocal, OnboardingStatus, GuildSettings
-from core.ai_handler import ai_handler
+from core.database import DatabaseManager, OnboardingStatus, GuildSettings
+from core.ai_handler import AIHandler
 
 logger = logging.getLogger(__name__)
 
-async def is_setup_complete(ctx: discord.ApplicationContext) -> bool:
-    """
-    A discord.py check that verifies if the essential settings for the guild are configured.
-    """
-    async with AsyncSessionLocal() as session:
+async def is_setup_complete(ctx: ApplicationContext) -> bool:
+    """A discord.py check that verifies if the essential settings for the guild are configured."""
+    # The db_manager is attached to the bot, which is available on the context.
+    db_manager = ctx.bot.db_manager
+    async with db_manager.get_session() as session:
         settings = await session.get(GuildSettings, ctx.guild.id)
         if not settings or not settings.welcome_channel_id or not settings.language_channel_id:
             await ctx.respond(
@@ -30,15 +30,15 @@ async def is_setup_complete(ctx: discord.ApplicationContext) -> bool:
 BASE_DIR = Path(__file__).parent.parent
 
 class Onboarding(commands.Cog):
-    """
-    A cog to handle the new member onboarding experience.
-    """
-    def __init__(self, bot: commands.Bot):
+    """A cog to handle the new member onboarding experience."""
+    def __init__(self, bot: commands.Bot, db_manager: DatabaseManager, ai_handler: AIHandler):
         self.bot = bot
+        self.db = db_manager
+        self.ai = ai_handler
         self.greetings = self.load_greetings()
 
     def load_greetings(self) -> dict:
-        """Loads the greeting messages from the JSON file."""
+        # ... (This method is unchanged) ...
         greetings_path = BASE_DIR / "locale" / "greetings.json"
         try:
             with open(greetings_path, 'r', encoding='utf-8') as f:
@@ -46,21 +46,15 @@ class Onboarding(commands.Cog):
                 return json.load(f)
         except (FileNotFoundError, json.JSONDecodeError) as e:
             logger.error(f"Failed to load greetings.json: {e}. Falling back to default.")
-            return {
-                "en": "Excellent! Let me quickly show you how our translator works..."
-            }
+            return {"en": "Excellent! Let me quickly show you how our translator works..."}
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
-        """
-        Triggered when a new member joins the server.
-        """
-        if member.bot:
-            return
+        if member.bot: return
+        logger.info(f"New member joined: {member.name} (ID: {member.id}) in guild {member.guild.id}")
 
-        logger.info(f"New member joined: {member.name} (ID: {member.id})")
-        
-        async with AsyncSessionLocal() as session:
+        # Use the injected DatabaseManager to get a session
+        async with self.db.get_session() as session:
             settings = await session.get(GuildSettings, member.guild.id)
             if not settings or not settings.welcome_channel_id or not settings.language_channel_id:
                 logger.warning(f"Onboarding triggered in guild {member.guild.id}, but setup is incomplete. Aborting.")
@@ -87,18 +81,14 @@ class Onboarding(commands.Cog):
         await welcome_channel.send(welcome_message)
         logger.info(f"Sent public welcome message for {member.name}.")
 
-
     async def handle_language_set(self, user_id: int, language_code: str):
-        """
-        This function is called by the API server when the Relay bot sends a notification.
-        """
         member = None
         guild_settings = None
         
         for guild in self.bot.guilds:
             member = guild.get_member(user_id)
             if member:
-                async with AsyncSessionLocal() as session:
+                async with self.db.get_session() as session:
                     guild_settings = await session.get(GuildSettings, guild.id)
                 break
 
@@ -106,24 +96,19 @@ class Onboarding(commands.Cog):
             logger.error(f"Could not find member {user_id} or their guild's settings are incomplete.")
             return
 
-        logger.info(f"Handling language set for User ID: {user_id} with language '{language_code}'")
+        logger.info(f"Handling language set for User ID: {user_id} in guild {member.guild.id} with language '{language_code}'")
         
-        async with AsyncSessionLocal() as session:
+        async with self.db.get_session() as session:
             user_status = await session.get(OnboardingStatus, user_id)
             if not user_status:
                 logger.warning(f"Received language set for user {user_id} but no record. Creating one.")
                 user_status = OnboardingStatus(user_id=user_id, status="IN_PROGRESS")
                 session.add(user_status)
-            
             user_status.language_code = language_code
             user_status.status = "AWAITING_ROLE_GUIDE"
             await session.commit()
-            logger.info(f"Updated database for {user_id}.")
-
-        greeting_text = self.greetings.get(language_code, self.greetings.get("en"))
-        if not greeting_text:
-             greeting_text = "Welcome! Let's get started."
-
+        
+        greeting_text = self.greetings.get(language_code, self.greetings.get("en", "Welcome!"))
         tutorial_text = greeting_text + "\n\nWhen you're ready to continue, just say **'continue'**."
 
         try:
@@ -131,19 +116,15 @@ class Onboarding(commands.Cog):
             if not language_channel:
                 logger.error(f"Language channel ID {guild_settings.language_channel_id} is set but channel was not found.")
                 return
-
             await language_channel.send(tutorial_text, ephemeral=True)
             logger.info(f"Sent first ephemeral tutorial to {member.name}.")
         except Exception as e:
             logger.error(f"Failed to send ephemeral message to {member.name}: {e}", exc_info=True)
-
-
+    
     @slash_command(name="ask-alfred", description="Ask Alfred a question about the server.")
     @commands.check(is_setup_complete)
-    async def ask_alfred(self, ctx: discord.ApplicationContext, question: str):
-        """A general help command that creates a private thread for Q&A."""
+    async def ask_alfred(self, ctx: ApplicationContext, question: str):
         await ctx.defer(ephemeral=True)
-        
         try:
             thread = await ctx.channel.create_thread(
                 name=f"❓ A question from {ctx.author.name}",
@@ -160,7 +141,8 @@ class Onboarding(commands.Cog):
                 "If you don't know the answer, say so clearly and suggest they ask a human staff member."
             )
             
-            ai_response = await ai_handler.get_chat_response(
+            # Use the injected AIHandler instance
+            ai_response = await self.ai.get_chat_response(
                 guild_id=ctx.guild.id,
                 channel_id=thread.id,
                 user_id=ctx.author.id,
@@ -169,12 +151,17 @@ class Onboarding(commands.Cog):
             )
 
             await thread.send(ai_response)
-
             await ctx.followup.send(f"I've created a private thread for you to answer your question: {thread.mention}", ephemeral=True)
 
         except Exception as e:
             logger.error(f"Failed to create help thread for {ctx.author.name}: {e}", exc_info=True)
             await ctx.followup.send("I'm sorry, I was unable to create a help thread for you at this time.", ephemeral=True)
 
-def setup(bot: commands.Bot):
-    bot.add_cog(Onboarding(bot))
+async def setup(bot: commands.Bot):
+    """The setup function for the cog, now asynchronous."""
+    if not hasattr(bot, 'db_manager') or not hasattr(bot, 'ai_handler'):
+        logger.critical("OnboardingCog cannot be loaded: Core services not found on bot object.")
+        return
+        
+    # Create the cog instance and pass the bot's managers to it.
+    await bot.add_cog(Onboarding(bot, bot.db_manager, bot.ai_handler))

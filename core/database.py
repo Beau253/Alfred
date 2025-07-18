@@ -15,36 +15,11 @@ from sqlalchemy.sql import func
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import relationship 
-
+from contextlib import asynccontextmanager, contextmanager
 from .config import settings  # Import our centralized settings
 
 # Set up a logger for this module
 logger = logging.getLogger(__name__)
-
-# --- Database Engine Setup ---
-# We create both a synchronous and an asynchronous engine.
-# The bot will primarily use the async engine for non-blocking database calls.
-# The Flask API server, being synchronous, will use the sync engine.
-
-try:
-    # Asynchronous engine for discord.py cogs
-    async_engine = create_async_engine(settings.DATABASE_URL, echo=False)
-    
-    # Synchronous engine for the Flask API server
-    sync_engine = create_engine(settings.DATABASE_URL.replace("postgresql+asyncpg", "postgresql"), echo=False)
-    
-    # Sessionmakers are factories for creating new database sessions.
-    AsyncSessionLocal = sessionmaker(
-        bind=async_engine, class_=AsyncSession, expire_on_commit=False
-    )
-    SyncSessionLocal = sessionmaker(
-        autocommit=False, autoflush=False, bind=sync_engine
-    )
-    
-    logger.info("Database engines created successfully.")
-except Exception as e:
-    logger.critical(f"Failed to create database engines: {e}", exc_info=True)
-    raise
 
 # --- ORM Model Definition ---
 # Base class for our declarative models
@@ -123,13 +98,58 @@ class GuildSettings(Base):
     def __repr__(self):
         return f"<GuildSettings(guild_id={self.guild_id})>"
 
-async def create_all_tables():
+class DatabaseManager:
     """
-    An asynchronous function to create all defined tables in the database.
-    This should be called once when the bot starts up.
+    Manages the database connection, sessions, and table creation.
     """
-    logger.info("Initializing database tables...")
-    async with async_engine.begin() as conn:
-        # This command connects to the DB and creates tables if they don't exist.
-        await conn.run_sync(Base.metadata.create_all)
-    logger.info("Database tables initialized.")
+    def __init__(self):
+        self.async_engine = None
+        self.AsyncSessionLocal = None
+        self.is_initialized = False
+
+    async def initialize(self):
+        """Initializes the database engine and creates all necessary tables."""
+        if self.is_initialized:
+            logger.warning("DatabaseManager is already initialized.")
+            return
+
+        try:
+            self.async_engine = create_async_engine(settings.DATABASE_URL, echo=False)
+            self.AsyncSessionLocal = sessionmaker(
+                bind=self.async_engine, class_=AsyncSession, expire_on_commit=False
+            )
+            
+            # Create all tables defined by the Base class
+            logger.info("Initializing database tables...")
+            async with self.async_engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            logger.info("Database tables initialized successfully.")
+            
+            self.is_initialized = True
+
+        except Exception as e:
+            logger.critical(f"Failed to initialize DatabaseManager: {e}", exc_info=True)
+            self.is_initialized = False
+            raise
+
+    @asynccontextmanager
+    async def get_session(self) -> AsyncSession:
+        """Provides a managed asynchronous session for database operations."""
+        if not self.is_initialized or not self.AsyncSessionLocal:
+            raise RuntimeError("DatabaseManager is not initialized. Cannot get session.")
+        
+        session: AsyncSession = self.AsyncSessionLocal()
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+            
+    async def close(self):
+        """Closes the database engine connection."""
+        if self.async_engine:
+            await self.async_engine.dispose()
+            self.is_initialized = False
+            logger.info("Database connection pool closed.")

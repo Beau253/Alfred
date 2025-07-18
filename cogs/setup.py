@@ -5,7 +5,7 @@ import discord
 from discord.commands import SlashCommandGroup, option
 from discord.ext import commands
 
-from core.database import AsyncSessionLocal, GuildSettings
+from core.database import DatabaseManager, GuildSettings
 
 logger = logging.getLogger(__name__)
 
@@ -13,17 +13,16 @@ class Setup(commands.Cog):
     """
     A cog for server administrators to configure Alfred's settings.
     """
-    def __init__(self, bot: commands.Bot):
+    def __init__(self, bot: commands.Bot, db_manager: DatabaseManager):
         self.bot = bot
+        self.db = db_manager
 
-    # Create a slash command group for all setup commands
     setup = SlashCommandGroup(
         "setup", 
         "Commands to configure Alfred for this server.",
         default_member_permissions=discord.Permissions(administrator=True)
     )
     
-    # Create a subgroup for channel-related settings
     channel_group = setup.create_subgroup(
         "channel", "Set up specific channels for Alfred's features."
     )
@@ -40,7 +39,6 @@ class Setup(commands.Cog):
         """Sets the language selection channel."""
         await self._update_setting(ctx, language_channel_id=channel.id)
 
-    # Create a subgroup for role-related settings
     role_group = setup.create_subgroup(
         "role", "Set up specific roles for Alfred's features."
     )
@@ -60,14 +58,12 @@ class Setup(commands.Cog):
         setting_value = list(kwargs.values())[0]
 
         try:
-            async with AsyncSessionLocal() as session:
-                # Find the existing settings record or create a new one
+            async with self.db.get_session() as session:
                 guild_settings = await session.get(GuildSettings, guild_id)
                 if not guild_settings:
                     guild_settings = GuildSettings(guild_id=guild_id)
                     session.add(guild_settings)
                 
-                # Update the specific setting
                 setattr(guild_settings, setting_key, setting_value)
                 await session.commit()
             
@@ -79,5 +75,10 @@ class Setup(commands.Cog):
             await ctx.followup.send("❌ An error occurred while updating the setting. Please check the logs.", ephemeral=True)
 
 
-def setup(bot: commands.Bot):
-    bot.add_cog(Setup(bot))
+async def setup(bot: commands.Bot):
+    """The setup function for the cog, now asynchronous."""
+    if not hasattr(bot, 'db_manager'):
+        logger.critical("SetupCog cannot be loaded: DatabaseManager not found on bot object.")
+        return
+        
+    await bot.add_cog(Setup(bot, bot.db_manager))

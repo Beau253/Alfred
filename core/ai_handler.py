@@ -6,7 +6,7 @@ from itertools import cycle
 import asyncio
 from collections import deque
 from .config import settings
-from .database import ConversationHistory, AsyncSessionLocal
+from .database import DatabaseManager, ConversationHistory
 from sqlalchemy import select, desc
 
 # Set up a logger for this module
@@ -24,10 +24,14 @@ class AIHandler:
     and provides a simple interface for other parts of the application
     to get responses from the AI.
     """
-    def __init__(self):
+    def __init__(self, db_manager: DatabaseManager):
+        """
+        Initializes the AI Handler with a dependency on the DatabaseManager.
+        """
+        self.db = db_manager # Store the provided DatabaseManager instance
         self.models = {}
         self._key_cycler = None
-        self.bot_user_id = None # Will be set by the bot on startup
+        self.bot_user_id = None
 
         if not settings.GEMINI_API_KEYS:
             logger.warning("No Gemini API keys found. AIHandler will be disabled.")
@@ -79,20 +83,16 @@ class AIHandler:
         return self.models[model_name]
 
     async def _get_history(self, channel_id: int) -> deque:
-        """
-        Gets conversation history, prioritizing cache then falling back to DB.
-        """
-        # 1. Check cache first
         if channel_id in CONVERSATION_CACHE:
             logger.debug(f"Cache hit for channel {channel_id}.")
             return CONVERSATION_CACHE[channel_id]
 
-        # 2. If cache miss, query database
         logger.info(f"Cache miss for channel {channel_id}. Querying database.")
         history_deque = deque(maxlen=CACHE_HISTORY_LENGTH)
         
         try:
-            async with AsyncSessionLocal() as session:
+            # Use the injected DatabaseManager to get a session
+            async with self.db.get_session() as session:
                 stmt = (
                     select(ConversationHistory)
                     .where(ConversationHistory.channel_id == channel_id)
@@ -100,15 +100,13 @@ class AIHandler:
                     .limit(CACHE_HISTORY_LENGTH)
                 )
                 result = await session.execute(stmt)
-                # The results are newest-first, so we reverse them to be chronological
                 db_records = reversed(result.scalars().all())
                 
                 for record in db_records:
                     history_deque.append({'role': record.role, 'parts': [record.content]})
             
-            # 3. Populate cache
-            if len(CONVERSATION_CACHE) > CACHE_MAX_SIZE:
-                 CONVERSATION_CACHE.popitem(last=False) # Evict oldest if cache is full
+            if len(CONVERSATION_CACHE) >= CACHE_MAX_SIZE:
+                CONVERSATION_CACHE.pop(next(iter(CONVERSATION_CACHE)))
 
             CONVERSATION_CACHE[channel_id] = history_deque
             logger.info(f"Cached conversation history for channel {channel_id}.")
@@ -118,25 +116,21 @@ class AIHandler:
         return history_deque
 
     async def _save_history(self, guild_id: int, channel_id: int, user_id: int, prompt: str, response: str):
-        """
-        Saves the new prompt and response to both the cache and the database.
-        """
-        # 1. Update cache
         if channel_id not in CONVERSATION_CACHE:
             CONVERSATION_CACHE[channel_id] = deque(maxlen=CACHE_HISTORY_LENGTH)
         
         CONVERSATION_CACHE[channel_id].append({'role': 'user', 'parts': [prompt]})
         CONVERSATION_CACHE[channel_id].append({'role': 'model', 'parts': [response]})
 
-        # 2. Save to database
         try:
-            async with AsyncSessionLocal() as session:
+            # Use the injected DatabaseManager to get a session
+            async with self.db.get_session() as session:
                 user_message = ConversationHistory(
                     guild_id=guild_id, channel_id=channel_id, user_id=user_id,
                     role='user', content=prompt
                 )
                 model_message = ConversationHistory(
-                    guild_id=guild_id, channel_id=channel_id, user_id=self.bot_user_id, # Assumes we have bot's ID
+                    guild_id=guild_id, channel_id=channel_id, user_id=self.bot_user_id,
                     role='model', content=response
                 )
                 session.add_all([user_message, model_message])
@@ -144,8 +138,9 @@ class AIHandler:
             logger.debug(f"Saved conversation history to DB for channel {channel_id}.")
         except Exception as e:
             logger.error(f"Failed to save history for channel {channel_id}: {e}", exc_info=True)
-
-
+            
+    # The get_chat_response method itself does not need to change, as its internal
+    # calls to _get_history and _save_history are now correctly refactored.
     async def get_chat_response(
         self, 
         guild_id: int,
@@ -154,10 +149,7 @@ class AIHandler:
         prompt: str,
         system_instruction: str = "You are Alfred, a helpful and concise AI assistant."
     ) -> str:
-        """
-        Gets a contextual response from the AI, including conversation history
-        and implementing rate-limit protection.
-        """
+        # ... (This method is unchanged) ...
         if not self._key_cycler or not self.bot_user_id:
             return "I am currently unable to connect to my AI core."
 
@@ -165,17 +157,13 @@ class AIHandler:
         if not model:
             return "I could not initialize my AI model. Please check my configuration."
 
-        # 1. Get conversation history
         history = await self._get_history(channel_id)
-        # Convert deque to a list for the API
         history_list = list(history)
 
-        # 2. Prepend the system instruction (if history is empty)
         if not history_list:
             history_list.insert(0, {'role': 'model', 'parts': ["Understood."]})
             history_list.insert(0, {'role': 'user', 'parts': [system_instruction]})
 
-        # 3. Rate Limit & Retry Logic
         max_retries = len(self._keys)
         for attempt in range(max_retries):
             try:
@@ -186,7 +174,6 @@ class AIHandler:
                 
                 logger.info("Successfully received response from Gemini.")
                 
-                # 4. Save history
                 await self._save_history(guild_id, channel_id, user_id, prompt, response.text)
                 
                 return response.text
@@ -202,6 +189,3 @@ class AIHandler:
                     return "My AI core is currently experiencing high traffic. Please try again in a moment."
         
         return "An unexpected error occurred after multiple retries."
-
-# Create a single, global instance of the AIHandler that the rest of the app can import.
-ai_handler = AIHandler()
