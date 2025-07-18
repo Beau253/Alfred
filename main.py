@@ -16,6 +16,12 @@ console_handler = logging.StreamHandler()
 console_handler.setFormatter(log_formatter)
 logger.addHandler(console_handler)
 
+discord_logger = logging.getLogger('discord')
+discord_logger.setLevel(logging.DEBUG)
+discord_handler = logging.FileHandler(filename='discord.log', encoding='utf-8', mode='w')
+discord_handler.setFormatter(logging.Formatter('%(asctime)s:%(levelname)s:%(name)s: %(message)s'))
+discord_logger.addHandler(discord_handler)
+
 # --- Application Imports ---
 from core.bot import AlfredBot
 from core.config import settings
