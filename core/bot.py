@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 # Define the path to the 'cogs' directory
 COGS_DIR = Path(__file__).parent.parent / "cogs"
 
+DEBUG_GUILDS = [1219455776096256060]
+
 class AlfredBot(discord.Bot):
     """
     The main class for the Alfred bot.
@@ -27,6 +29,13 @@ class AlfredBot(discord.Bot):
         intents = discord.Intents.default()
         intents.members = True  # Required for on_member_join events
         intents.message_content = True  # Required for some command interactions
+
+        super().__init__(
+            *args, 
+            intents=intents, 
+            debug_guilds=DEBUG_GUILDS, 
+            **kwargs
+        )
 
         # Pass the intents to the parent class constructor
         super().__init__(*args, intents=intents, **kwargs)
@@ -68,6 +77,11 @@ class AlfredBot(discord.Bot):
         and is ready to start processing events.
         """
         ai_handler.set_bot_user_id(self.user.id)
+
+        logger.info("Syncing application commands...")
+        await self.sync_commands()
+        logger.info("Application commands synced successfully.")
+        
         logger.info(f"Logged in as {self.user.name} (ID: {self.user.id})")
         logger.info("Alfred is online and ready.")
         print("------")
