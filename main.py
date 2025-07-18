@@ -27,7 +27,10 @@ from core.bot import AlfredBot
 from core.config import settings
 
 async def main():
-    """The main asynchronous entry point for the application."""
+
+    from core.bot import AlfredBot
+    from core.config import settings
+    
     logger.info("Initializing Alfred...")
     bot = AlfredBot()
     try:
