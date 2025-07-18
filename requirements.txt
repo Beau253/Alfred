@@ -27,3 +27,6 @@ SQLAlchemy==2.0.31
 # Driver for connecting to PostgreSQL databases
 psycopg2-binary==2.9.9
 asyncpg==0.29.0
+
+# ASGI Server to run Flask and discord.py in the same event loop
+hypercorn==0.16.0

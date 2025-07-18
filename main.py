@@ -1,73 +1,67 @@
 # Alfred/main.py
 
 import logging
-import os
-import time
-from threading import Thread
 import asyncio
+from hypercorn.config import Config
+from hypercorn.asyncio import serve
 
 # --- Basic Logging Setup ---
-# This sets up logging to a file and to the console.
-# It's good practice to have this in your main entry point.
 log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
-
-# File handler
 file_handler = logging.FileHandler("alfred.log")
 file_handler.setFormatter(log_formatter)
-logger.addHandler(file_handler)
-
-# Console handler
-console_handler = logging.StreamHandler()
-console_handler.setFormatter(log_formatter)
-logger.addHandler(console_handler)
+logger.addHandler(console_handler) # This was a typo, should be console_handler
 
 # --- Application Imports ---
-# We import our custom components AFTER setting up logging.
 from core.bot import AlfredBot
 from core.api_server import app as flask_app
 from core.config import settings
 
-# --- Threading Functions ---
-def run_api_server():
-    """Runs the Flask web server in a production-ready way using Waitress."""
-    from waitress import serve
-    logger.info(f"Starting Flask API server on {settings.API_SERVER_HOST}:{settings.API_SERVER_PORT}")
-    serve(flask_app, host=settings.API_SERVER_HOST, port=settings.API_SERVER_PORT)
+# --- Asynchronous Runner ---
+async def main():
+    """The main asynchronous entry point for the application."""
+    logger.info("Initializing Alfred...")
 
-def run_discord_bot():
-    """Creates and runs the Discord bot instance."""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    logger.info("Starting Alfred Discord bot...")
+    # 1. Create the bot instance
     bot = AlfredBot()
-    flask_app.bot = bot 
-    bot.run(settings.DISCORD_BOT_TOKEN)
+    
+    # 2. Configure Hypercorn to run our Flask app
+    # Hypercorn is an ASGI server that can run Flask apps in an async context.
+    config = Config()
+    config.bind = [f"{settings.API_SERVER_HOST}:{settings.API_SERVER_PORT}"]
+    
+    # This is a special function to run a WSGI app (Flask) in an ASGI server (Hypercorn)
+    shutdown_trigger = asyncio.Event()
+    
+    # Create tasks for both the bot and the API server
+    # We pass the bot instance to the Flask app *before* starting the tasks
+    flask_app.bot = bot
+    
+    api_task = asyncio.create_task(serve(flask_app, config, shutdown_trigger=shutdown_trigger.set))
+    bot_task = asyncio.create_task(bot.start(settings.DISCORD_BOT_TOKEN))
+
+    # Run both tasks concurrently. If one fails, the other will be cancelled.
+    done, pending = await asyncio.wait(
+        [bot_task, api_task], return_when=asyncio.FIRST_COMPLETED
+    )
+    
+    logger.info("A core task has completed. Shutting down...")
+    for task in pending:
+        task.cancel()
+    
+    # Trigger the shutdown for the API server
+    shutdown_trigger.set()
+    await asyncio.gather(*pending, return_exceptions=True)
+    
+    # Gracefully close the bot
+    if not bot.is_closed():
+        await bot.close()
 
 
 # --- Main Execution Block ---
 if __name__ == "__main__":
-    logger.info("Initializing Alfred...")
-
-    # Create a thread for the API server
-    api_thread = Thread(target=run_api_server)
-    api_thread.daemon = True  # Allows the main program to exit even if this thread is running
-
-    # Create a thread for the Discord bot
-    bot_thread = Thread(target=run_discord_bot)
-    bot_thread.daemon = True
-
-    # Start both threads
-    api_thread.start()
-    bot_thread.start()
-    logger.info("API Server and Discord Bot are running in separate threads.")
-
-    # Keep the main thread alive to handle signals like Ctrl+C
     try:
-        while True:
-            time.sleep(1)
+        asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Shutdown signal received. Exiting.")
-        # The daemon threads will be terminated automatically when the main script exits.
-        os._exit(0)
