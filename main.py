@@ -58,7 +58,7 @@ async def main():
         task.cancel()
     
     # Trigger the shutdown for the API server
-    shutdown_trigger.set()
+    shutdown_event.set()
     await asyncio.gather(*pending, return_exceptions=True)
     
     # Gracefully close the bot
