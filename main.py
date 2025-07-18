@@ -4,6 +4,7 @@ import logging
 import os
 import time
 from threading import Thread
+import asyncio
 
 # --- Basic Logging Setup ---
 # This sets up logging to a file and to the console.
@@ -37,6 +38,8 @@ def run_api_server():
 
 def run_discord_bot():
     """Creates and runs the Discord bot instance."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     logger.info("Starting Alfred Discord bot...")
     bot = AlfredBot()
     flask_app.bot = bot 
