@@ -70,6 +70,22 @@ class AlfredBot(discord.Bot):
                     logger.error(f"  -> ❌ Failed to load cog: {cog_name}", exc_info=True)
         logger.info(f"[SETUP HOOK] ✅ Cog loading complete. {cogs_loaded} cogs loaded.")
         
+        logger.info("[SETUP HOOK] Step 4: Forcibly syncing command tree to debug guild...")
+        try:
+            guild_obj = discord.Object(id=DEBUG_GUILDS[0])
+            # This line ensures any global commands are also made available to the debug guild
+            self.tree.copy_global_to(guild=guild_obj)
+            # This is the explicit sync command
+            synced_commands = await self.tree.sync(guild=guild_obj)
+            
+            # This new log is the most important one. It will tell us if the sync was successful.
+            logger.info(f"[SETUP HOOK] ✅ COMMANDS SYNCED: {len(synced_commands)} commands registered to guild {DEBUG_GUILDS[0]}.")
+            for command in synced_commands:
+                 logger.info(f"    -> Synced command: '{command.name}'")
+
+        except Exception as e:
+            logger.critical(f"[SETUP HOOK] ❌ FAILED TO SYNC COMMANDS: {e}", exc_info=True)
+        
         logger.info("--- [SETUP HOOK] Finished ---")
 
     async def on_ready(self) -> None:
