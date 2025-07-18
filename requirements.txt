@@ -2,7 +2,7 @@
 
 # Discord Bot Core
 # Using a recent stable version of discord.py
-discord.py==2.4.0
+py-cord==2.5.0
 
 # Configuration Management
 # For loading variables from the .env file
