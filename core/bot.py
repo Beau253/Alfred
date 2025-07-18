@@ -19,28 +19,28 @@ DEBUG_GUILDS = [1219455776096256060]
 
 class AlfredBot(discord.Bot):
     def __init__(self, *args, **kwargs):
-        # Define the intents for the bot.
+        logger.info("AlfredBot class is initializing.")
+        
+        # 1. Initialize your custom managers first.
+        self.db_manager = DatabaseManager()
+        self.ai_handler = AIHandler(self.db_manager)
+
+        # 2. Set up instance variables.
+        self.is_setup_complete = False
+        flask_app.bot = self
+
+        # 3. Define the intents for the bot.
         intents = discord.Intents.default()
         intents.members = True
         intents.message_content = True
 
-        # We pass auto_sync_commands=False because we are handling the sync manually
+        # 4. NOW call the parent's __init__ method. This is the crucial fix.
         super().__init__(
             *args, 
             intents=intents, 
-            debug_guilds=DEBUG_GUILDS, 
-            auto_sync_commands=False,  # Add this line
+            debug_guilds=DEBUG_GUILDS,
             **kwargs
         )
-
-        logger.info("AlfredBot class is initializing.")
-        self.db_manager = DatabaseManager()
-        self.ai_handler = AIHandler(self.db_manager)
-
-        # Flag to ensure setup runs only once
-        self.is_setup_complete = False
-
-        flask_app.bot = self
 
     async def start_api_server(self):
         """A background task to run the Hypercorn web server."""
