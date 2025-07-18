@@ -15,7 +15,7 @@ file_handler.setFormatter(log_formatter)
 
 console_handler = logging.StreamHandler()
 console_handler.setFormatter(log_formatter)
-logger.addHandler(console_handler)
+logger.addHandler(file_handler)
 
 # --- Application Imports ---
 from core.bot import AlfredBot
@@ -36,7 +36,7 @@ async def main():
     config.bind = [f"{settings.API_SERVER_HOST}:{settings.API_SERVER_PORT}"]
     
     # This is a special function to run a WSGI app (Flask) in an ASGI server (Hypercorn)
-    shutdown_trigger = asyncio.Event()
+    shutdown_event = asyncio.Event()
     
     # Create tasks for both the bot and the API server
     # We pass the bot instance to the Flask app *before* starting the tasks
@@ -45,8 +45,7 @@ async def main():
     api_task = asyncio.create_task(
         serve(flask_app, config, shutdown_trigger=lambda: shutdown_event.wait())
     )
-    
-    api_task = asyncio.create_task(serve(flask_app, config, shutdown_trigger=shutdown_trigger.set))
+
     bot_task = asyncio.create_task(bot.start(settings.DISCORD_BOT_TOKEN))
 
     # Run both tasks concurrently. If one fails, the other will be cancelled.
