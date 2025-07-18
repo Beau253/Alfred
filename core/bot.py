@@ -8,27 +8,29 @@ import asyncio
 from hypercorn.config import Config
 from hypercorn.asyncio import serve
 from .api_server import app as flask_app
-from discord.ext import commands
 from .database import DatabaseManager
 from .ai_handler import AIHandler
+from .config import settings
 
 
 logger = logging.getLogger(__name__)
 COGS_DIR = Path(__file__).parent.parent / "cogs"
 DEBUG_GUILDS = [1219455776096256060]
 
-class AlfredBot(commands.Bot):
+class AlfredBot(discord.Bot):
     def __init__(self, *args, **kwargs):
         # Define the intents for the bot.
         intents = discord.Intents.default()
         intents.members = True
         intents.message_content = True
 
-        super().__init__(*args, command_prefix="!", intents=intents, **kwargs)
+        super().__init__(*args, intents=intents, debug_guilds=DEBUG_GUILDS, **kwargs)
 
         logger.info("AlfredBot class is initializing.")
         self.db_manager = DatabaseManager()
         self.ai_handler = AIHandler(self.db_manager) # Pass the db_manager to the AI handler
+
+        flask_app.bot = self
 
     async def start_api_server(self):
         """A background task to run the Hypercorn web server."""
@@ -61,27 +63,13 @@ class AlfredBot(commands.Bot):
             if filename.endswith(".py") and not filename.startswith("_"):
                 cog_name = f"cogs.{filename[:-3]}"
                 try:
-                    await self.load_extension(cog_name)
+                    self.load_extension(f"cogs.{filename[:-3]}")
                     logger.info(f"  -> ✅ Successfully loaded cog: {cog_name}")
                     cogs_loaded += 1
                 except Exception as e:
                     logger.error(f"  -> ❌ Failed to load cog: {cog_name}", exc_info=True)
         logger.info(f"[SETUP HOOK] ✅ Cog loading complete. {cogs_loaded} cogs loaded.")
         
-        # Step 4: Sync the command tree to the debug guild
-        logger.info("[SETUP HOOK] Step 4: Syncing command tree to debug guild...")
-        guild_obj = discord.Object(id=DEBUG_GUILDS[0])
-        self.tree.copy_global_to(guild=guild_obj)
-        try:
-            synced_commands = await self.tree.sync(guild=guild_obj)
-            # This is the most important new log line.
-            logger.info(f"[SETUP HOOK] ✅ COMMANDS SYNCED: {len(synced_commands)} commands registered.")
-            # Let's print the actual commands we synced for debugging.
-            for command in synced_commands:
-                logger.info(f"    -> Synced command: '{command.name}' of type {type(command)}")
-        except Exception as e:
-            logger.critical(f"[SETUP HOOK] ❌ FAILED TO SYNC COMMANDS: {e}", exc_info=True)
-            
         logger.info("--- [SETUP HOOK] Finished ---")
 
     async def on_ready(self) -> None:
