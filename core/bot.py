@@ -12,7 +12,6 @@ from .database import DatabaseManager
 from .ai_handler import AIHandler
 from .config import settings
 
-
 logger = logging.getLogger(__name__)
 COGS_DIR = Path(__file__).parent.parent / "cogs"
 DEBUG_GUILDS = [1219455776096256060]
@@ -21,24 +20,26 @@ class AlfredBot(discord.Bot):
     def __init__(self, *args, **kwargs):
         logger.info("AlfredBot class is initializing.")
         
-        # 1. Initialize your custom managers first.
+        # Initialize custom managers
         self.db_manager = DatabaseManager()
         self.ai_handler = AIHandler(self.db_manager)
 
-        # 2. Set up instance variables.
+        # Set up instance variables
         self.is_setup_complete = False
         flask_app.bot = self
 
-        # 3. Define the intents for the bot.
+        # Define intents
         intents = discord.Intents.default()
         intents.members = True
         intents.message_content = True
 
-        # 4. NOW call the parent's __init__ method. This is the crucial fix.
+        # Call parent __init__ LAST, and disable the default auto-sync.
+        # We will handle syncing manually in on_ready for better control.
         super().__init__(
             *args, 
             intents=intents, 
             debug_guilds=DEBUG_GUILDS,
+            auto_sync_commands=False, # This disables the problematic on_connect sync
             **kwargs
         )
 
@@ -54,50 +55,43 @@ class AlfredBot(discord.Bot):
             logger.critical(f"API server crashed with an exception: {e}", exc_info=True)
 
     async def on_ready(self) -> None:
-        """
-        Called when the bot is fully connected and ready.
-        Contains the one-time setup logic, moved from setup_hook.
-        """
-        # Pass the bot's user ID to the AI handler now that we know it.
+        """Called when the bot is fully connected and ready."""
         self.ai_handler.set_bot_user_id(self.user.id)
         
         logger.info("="*50)
         logger.info(f"Alfred is online. Logged in as {self.user.name} (ID: {self.user.id})")
         logger.info("="*50)
 
-        # --- ONE-TIME SETUP LOGIC ---
         if not self.is_setup_complete:
             logger.info("--- [ON_READY] Starting one-time setup ---")
 
-            # Step 1: Start the API server as a background task
+            # Start background tasks
             logger.info("[ON_READY] Step 1: Starting API Server in background...")
             self.api_task = self.loop.create_task(self.start_api_server())
             
-            # Step 2: Initialize the Database Manager
             logger.info("[ON_READY] Step 2: Initializing Database Manager...")
             await self.db_manager.initialize()
             logger.info("[ON_READY] ✅ Database Manager Initialized.")
 
-            # Step 3: Load all cogs
+            # Load Cogs
             logger.info("[ON_READY] Step 3: Loading Cogs...")
             cogs_loaded = 0
             for filename in os.listdir(COGS_DIR):
                 if filename.endswith(".py") and not filename.startswith("_"):
                     cog_name = f"cogs.{filename[:-3]}"
                     try:
-                        self.load_extension(f"cogs.{filename[:-3]}")
+                        self.load_extension(cog_name)
                         logger.info(f"  -> ✅ Successfully loaded cog: {cog_name}")
                         cogs_loaded += 1
                     except Exception as e:
                         logger.error(f"  -> ❌ Failed to load cog: {cog_name}", exc_info=True)
             logger.info(f"[ON_READY] ✅ Cog loading complete. {cogs_loaded} cogs loaded.")
             
-            # Step 4: Forcibly syncing command tree to debug guild
+            # Sync Commands
             logger.info("[ON_READY] Step 4: Forcibly syncing command tree to debug guild...")
             try:
-                guild_obj = discord.Object(id=DEBUG_GUILDS[0])
-                self.tree.copy_global_to(guild=guild_obj)
-                synced_commands = await self.tree.sync(guild=guild_obj)
+                # self.tree will exist now because the bot initialized correctly.
+                synced_commands = await self.tree.sync(guild=discord.Object(id=DEBUG_GUILDS[0]))
                 
                 logger.info(f"[ON_READY] ✅ COMMANDS SYNCED: {len(synced_commands)} commands registered to guild {DEBUG_GUILDS[0]}.")
                 for command in synced_commands:
@@ -108,7 +102,6 @@ class AlfredBot(discord.Bot):
             
             self.is_setup_complete = True
             logger.info("--- [ON_READY] One-time setup finished ---")
-
 
     async def close(self):
         """Custom close method to gracefully shut down services."""
