@@ -20,29 +20,41 @@ class Setup(commands.Cog):
         default_permissions=discord.Permissions(administrator=True),
         guild_only=True
     )
+    
+    # This is a subgroup: /setup channel
+    channel_group = app_commands.Group(
+        name="channel", 
+        description="Set up specific channels for Alfred's features.",
+        parent=setup # Link it to the main /setup group
+    )
 
-    def __init__(self, bot: commands.Bot, db_manager: DatabaseManager):
-        self.bot = bot
-        self.db = db_manager
+    # This is a subgroup: /setup role
+    role_group = app_commands.Group(
+        name="role", 
+        description="Set up specific roles for Alfred's features.",
+        parent=setup # Link it to the main /setup group
+    )
 
-    @setup.command(name="welcome", description="Set the channel for welcome messages.")
+    # Now we attach commands to the subgroups
+    @channel_group.command(name="welcome", description="Set the channel for welcome messages.")
     @app_commands.describe(channel="The channel to send welcome messages to.")
     async def set_welcome_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
         """Sets the welcome message channel."""
         await self._update_setting(interaction, welcome_channel_id=channel.id)
 
-    @setup.command(name="language", description="Set the channel where users select their language.")
+    @channel_group.command(name="language", description="Set the channel where users select their language.")
     @app_commands.describe(channel="The channel for language selection.")
     async def set_language_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
         """Sets the language selection channel."""
         await self._update_setting(interaction, language_channel_id=channel.id)
 
-    @setup.command(name="support", description="Set the role for support staff.")
+    @role_group.command(name="support", description="Set the role for support staff.")
     @app_commands.describe(role="The role that identifies support staff.")
     async def set_support_role(self, interaction: discord.Interaction, role: discord.Role):
         """Sets the support staff role."""
         await self._update_setting(interaction, support_role_id=role.id)
     
+    # The helper function remains the same
     async def _update_setting(self, interaction: discord.Interaction, **kwargs):
         """A helper function to update settings in the database."""
         await interaction.response.defer(ephemeral=True)

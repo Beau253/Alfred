@@ -115,7 +115,7 @@ class Onboarding(commands.Cog):
     
     @app_commands.command(name="ask-alfred", description="Ask Alfred a question about the server.")
     @app_commands.check(is_setup_complete)
-    async def ask_alfred(self, interaction: discord.Interaction, question: str):
+    async def ask_alfred(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         try:
             thread = await interaction.channel.create_thread(
@@ -124,26 +124,40 @@ class Onboarding(commands.Cog):
             )
             await thread.add_user(interaction.user)
 
-            initial_message = f"Hello {interaction.user.mention}, you asked: *'{question}'*\n\nI'll look into that for you now..."
+            # The initial message is now a generic welcome.
+            initial_message = f"Hello {interaction.user.mention}, please ask your question here and I'll do my best to help."
             await thread.send(initial_message)
             
-            system_prompt = (
-                "You are Alfred, a helpful AI assistant for this Discord server. "
-                "Your goal is to answer user questions concisely and accurately. "
-                "If you don't know the answer, say so clearly and suggest they ask a human staff member."
-            )
-            
-            ai_response = await self.ai.get_chat_response(
-                guild_id=interaction.guild.id,
-                channel_id=thread.id,
-                user_id=interaction.user.id,
-                prompt=question,
-                system_instruction=system_prompt
-            )
-
-            await thread.send(ai_response)
-            await interaction.followup.send(f"I've created a private thread for you to answer your question: {thread.mention}", ephemeral=True)
+            await interaction.followup.send(f"I've created a private thread for you to ask your question: {thread.mention}", ephemeral=True)
 
         except Exception as e:
             logger.error(f"Failed to create help thread for {interaction.user.name}: {e}", exc_info=True)
             await interaction.followup.send("I'm sorry, I was unable to create a help thread for you at this time.", ephemeral=True)
+
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        # Ignore messages from bots (including ourself)
+        if message.author.bot:
+            return
+
+        # Check if the message is in a thread and if the thread was created by Alfred
+        if isinstance(message.channel, discord.Thread) and message.channel.owner == self.bot.user:
+            # Check if the thread name indicates it's a help thread
+            if message.channel.name.startswith("❓ A question from"):
+                async with message.channel.typing():
+                    logger.info(f"AI responding to message from {message.author.name} in thread {message.channel.id}")
+                    
+                    system_prompt = (
+                        "You are Alfred, a helpful AI assistant for this Discord server. "
+                        "Your goal is to answer user questions concisely and accurately. "
+                        "If you don't know the answer, say so clearly and suggest they ask a human staff member."
+                    )
+
+                    ai_response = await self.ai.get_chat_response(
+                        guild_id=message.guild.id,
+                        channel_id=message.channel.id,
+                        user_id=message.author.id,
+                        prompt=message.content,
+                        system_instruction=system_prompt
+                    )
+                    await message.channel.send(ai_response)
