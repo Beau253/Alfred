@@ -156,12 +156,3 @@ class Onboarding(commands.Cog):
         except Exception as e:
             logger.error(f"Failed to create help thread for {ctx.author.name}: {e}", exc_info=True)
             await ctx.followup.send("I'm sorry, I was unable to create a help thread for you at this time.", ephemeral=True)
-
-async def setup(bot: commands.Bot):
-    """The setup function for the cog, now asynchronous."""
-    if not hasattr(bot, 'db_manager') or not hasattr(bot, 'ai_handler'):
-        logger.critical("OnboardingCog cannot be loaded: Core services not found on bot object.")
-        return
-        
-    # Create the cog instance and pass the bot's managers to it.
-    await bot.add_cog(Onboarding(bot, bot.db_manager, bot.ai_handler))

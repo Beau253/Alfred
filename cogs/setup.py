@@ -73,12 +73,3 @@ class Setup(commands.Cog):
         except Exception as e:
             logger.error(f"Failed to update setting for guild {guild_id}: {e}", exc_info=True)
             await ctx.followup.send("❌ An error occurred while updating the setting. Please check the logs.", ephemeral=True)
-
-
-async def setup(bot: commands.Bot):
-    """The setup function for the cog, now asynchronous."""
-    if not hasattr(bot, 'db_manager'):
-        logger.critical("SetupCog cannot be loaded: DatabaseManager not found on bot object.")
-        return
-        
-    await bot.add_cog(Setup(bot, bot.db_manager))

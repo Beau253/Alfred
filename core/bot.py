@@ -11,6 +11,8 @@ from .api_server import app as flask_app
 from .database import DatabaseManager
 from .ai_handler import AIHandler
 from .config import settings
+from cogs.onboarding import Onboarding
+from cogs.setup import Setup
 
 logger = logging.getLogger(__name__)
 COGS_DIR = Path(__file__).parent.parent / "cogs"
@@ -75,17 +77,15 @@ class AlfredBot(discord.Bot):
 
             # Load Cogs
             logger.info("[ON_READY] Step 3: Loading Cogs...")
-            cogs_loaded = 0
-            for filename in os.listdir(COGS_DIR):
-                if filename.endswith(".py") and not filename.startswith("_"):
-                    cog_name = f"cogs.{filename[:-3]}"
-                    try:
-                        self.load_extension(cog_name)
-                        logger.info(f"  -> ✅ Successfully loaded cog: {cog_name}")
-                        cogs_loaded += 1
-                    except Exception as e:
-                        logger.error(f"  -> ❌ Failed to load cog: {cog_name}", exc_info=True)
-            logger.info(f"[ON_READY] ✅ Cog loading complete. {cogs_loaded} cogs loaded.")
+
+            try:
+                self.add_cog(Onboarding(self, self.db_manager, self.ai_handler))
+                logger.info("  -> ✅ Successfully loaded cog: Onboarding")
+                self.add_cog(Setup(self, self.db_manager))
+                logger.info("  -> ✅ Successfully loaded cog: Setup")
+                logger.info(f"[ON_READY] ✅ Cog loading complete.")
+            except Exception as e:
+                logger.error(f"  -> ❌ Failed to manually load cogs", exc_info=True)
             
             # Sync Commands
             logger.info("[ON_READY] Step 4: Forcibly syncing command tree to debug guild...")
