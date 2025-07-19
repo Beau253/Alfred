@@ -4,7 +4,7 @@ import logging
 import discord
 
 from discord.ext import commands
-from discord import app_commands, ApplicationContext
+from discord import app_commands
 import json
 from pathlib import Path
 from core.database import DatabaseManager, OnboardingStatus, GuildSettings
@@ -12,20 +12,16 @@ from core.ai_handler import AIHandler
 
 logger = logging.getLogger(__name__)
 
-async def is_setup_complete(ctx: ApplicationContext) -> bool:
+async def is_setup_complete(interaction: discord.Interaction) -> bool:
     """A discord.py check that verifies if the essential settings for the guild are configured."""
-    # The db_manager is attached to the bot, which is available on the context.
-    db_manager = ctx.bot.db_manager
+    db_manager = interaction.client.db_manager
     async with db_manager.get_session() as session:
-        settings = await session.get(GuildSettings, ctx.guild.id)
+        settings = await session.get(GuildSettings, interaction.guild.id)
         if not settings or not settings.welcome_channel_id or not settings.language_channel_id:
-            await ctx.respond(
-                "❌ **Setup Incomplete!**\n"
+            raise app_commands.CheckFailure(
                 "An administrator must configure the welcome and language channels first.\n"
-                "Please use `/setup channel welcome` and `/setup channel language`.",
-                ephemeral=True
+                "Please use `/setup welcome` and `/setup language`."
             )
-            return False
     return True
 
 BASE_DIR = Path(__file__).parent.parent
@@ -39,7 +35,6 @@ class Onboarding(commands.Cog):
         self.greetings = self.load_greetings()
 
     def load_greetings(self) -> dict:
-        # ... (This method is unchanged) ...
         greetings_path = BASE_DIR / "locale" / "greetings.json"
         try:
             with open(greetings_path, 'r', encoding='utf-8') as f:
@@ -113,27 +108,23 @@ class Onboarding(commands.Cog):
         tutorial_text = greeting_text + "\n\nWhen you're ready to continue, just say **'continue'**."
 
         try:
-            language_channel = self.bot.get_channel(guild_settings.language_channel_id)
-            if not language_channel:
-                logger.error(f"Language channel ID {guild_settings.language_channel_id} is set but channel was not found.")
-                return
-            await language_channel.send(tutorial_text, ephemeral=True)
-            logger.info(f"Sent first ephemeral tutorial to {member.name}.")
+            await member.send(tutorial_text)
+            logger.info(f"Sent first tutorial DM to {member.name}.")
         except Exception as e:
-            logger.error(f"Failed to send ephemeral message to {member.name}: {e}", exc_info=True)
+            logger.error(f"Failed to send DM to {member.name}: {e}", exc_info=True)
     
     @app_commands.command(name="ask-alfred", description="Ask Alfred a question about the server.")
     @app_commands.check(is_setup_complete)
-    async def ask_alfred(self, ctx: ApplicationContext, question: str):
-        await ctx.defer(ephemeral=True)
+    async def ask_alfred(self, interaction: discord.Interaction, question: str):
+        await interaction.response.defer(ephemeral=True)
         try:
-            thread = await ctx.channel.create_thread(
-                name=f"❓ A question from {ctx.author.name}",
+            thread = await interaction.channel.create_thread(
+                name=f"❓ A question from {interaction.user.name}",
                 type=discord.ChannelType.private_thread
             )
-            await thread.add_user(ctx.author)
+            await thread.add_user(interaction.user)
 
-            initial_message = f"Hello {ctx.author.mention}, you asked: *'{question}'*\n\nI'll look into that for you now..."
+            initial_message = f"Hello {interaction.user.mention}, you asked: *'{question}'*\n\nI'll look into that for you now..."
             await thread.send(initial_message)
             
             system_prompt = (
@@ -142,18 +133,17 @@ class Onboarding(commands.Cog):
                 "If you don't know the answer, say so clearly and suggest they ask a human staff member."
             )
             
-            # Use the injected AIHandler instance
             ai_response = await self.ai.get_chat_response(
-                guild_id=ctx.guild.id,
+                guild_id=interaction.guild.id,
                 channel_id=thread.id,
-                user_id=ctx.author.id,
+                user_id=interaction.user.id,
                 prompt=question,
                 system_instruction=system_prompt
             )
 
             await thread.send(ai_response)
-            await ctx.followup.send(f"I've created a private thread for you to answer your question: {thread.mention}", ephemeral=True)
+            await interaction.followup.send(f"I've created a private thread for you to answer your question: {thread.mention}", ephemeral=True)
 
         except Exception as e:
-            logger.error(f"Failed to create help thread for {ctx.author.name}: {e}", exc_info=True)
-            await ctx.followup.send("I'm sorry, I was unable to create a help thread for you at this time.", ephemeral=True)
+            logger.error(f"Failed to create help thread for {interaction.user.name}: {e}", exc_info=True)
+            await interaction.followup.send("I'm sorry, I was unable to create a help thread for you at this time.", ephemeral=True)
