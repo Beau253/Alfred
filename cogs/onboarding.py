@@ -2,8 +2,9 @@
 
 import logging
 import discord
-from discord.commands import slash_command, ApplicationContext
+
 from discord.ext import commands
+from discord import app_commands, ApplicationContext
 import json
 from pathlib import Path
 from core.database import DatabaseManager, OnboardingStatus, GuildSettings
@@ -121,8 +122,8 @@ class Onboarding(commands.Cog):
         except Exception as e:
             logger.error(f"Failed to send ephemeral message to {member.name}: {e}", exc_info=True)
     
-    @slash_command(name="ask-alfred", description="Ask Alfred a question about the server.")
-    @commands.check(is_setup_complete)
+    @app_commands.command(name="ask-alfred", description="Ask Alfred a question about the server.")
+    @app_commands.check(is_setup_complete)
     async def ask_alfred(self, ctx: ApplicationContext, question: str):
         await ctx.defer(ephemeral=True)
         try:

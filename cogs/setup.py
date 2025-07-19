@@ -2,8 +2,8 @@
 
 import logging
 import discord
-from discord.commands import SlashCommandGroup, option
 from discord.ext import commands
+from discord import app_commands, ApplicationContext
 
 from core.database import DatabaseManager, GuildSettings
 
@@ -13,47 +13,41 @@ class Setup(commands.Cog):
     """
     A cog for server administrators to configure Alfred's settings.
     """
+    # Create the group here
+    setup = app_commands.Group(
+        name="setup", 
+        description="Commands to configure Alfred for this server.",
+        default_permissions=discord.Permissions(administrator=True),
+        guild_only=True
+    )
+
     def __init__(self, bot: commands.Bot, db_manager: DatabaseManager):
         self.bot = bot
         self.db = db_manager
 
-    setup = SlashCommandGroup(
-        "setup", 
-        "Commands to configure Alfred for this server.",
-        default_member_permissions=discord.Permissions(administrator=True)
-    )
-    
-    channel_group = setup.create_subgroup(
-        "channel", "Set up specific channels for Alfred's features."
-    )
-
-    @channel_group.command(name="welcome", description="Set the channel for welcome messages.")
-    @option("channel", discord.TextChannel, description="The channel to send welcome messages to.")
-    async def set_welcome_channel(self, ctx: discord.ApplicationContext, channel: discord.TextChannel):
+    @setup.command(name="welcome", description="Set the channel for welcome messages.")
+    @app_commands.describe(channel="The channel to send welcome messages to.")
+    async def set_welcome_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
         """Sets the welcome message channel."""
-        await self._update_setting(ctx, welcome_channel_id=channel.id)
+        await self._update_setting(interaction, welcome_channel_id=channel.id)
 
-    @channel_group.command(name="language", description="Set the channel where users select their language.")
-    @option("channel", discord.TextChannel, description="The channel for language selection.")
-    async def set_language_channel(self, ctx: discord.ApplicationContext, channel: discord.TextChannel):
+    @setup.command(name="language", description="Set the channel where users select their language.")
+    @app_commands.describe(channel="The channel for language selection.")
+    async def set_language_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
         """Sets the language selection channel."""
-        await self._update_setting(ctx, language_channel_id=channel.id)
+        await self._update_setting(interaction, language_channel_id=channel.id)
 
-    role_group = setup.create_subgroup(
-        "role", "Set up specific roles for Alfred's features."
-    )
-
-    @role_group.command(name="support", description="Set the role for support staff.")
-    @option("role", discord.Role, description="The role that identifies support staff.")
-    async def set_support_role(self, ctx: discord.ApplicationContext, role: discord.Role):
+    @setup.command(name="support", description="Set the role for support staff.")
+    @app_commands.describe(role="The role that identifies support staff.")
+    async def set_support_role(self, interaction: discord.Interaction, role: discord.Role):
         """Sets the support staff role."""
-        await self._update_setting(ctx, support_role_id=role.id)
+        await self._update_setting(interaction, support_role_id=role.id)
     
-    async def _update_setting(self, ctx: discord.ApplicationContext, **kwargs):
+    async def _update_setting(self, interaction: discord.Interaction, **kwargs):
         """A helper function to update settings in the database."""
-        await ctx.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
         
-        guild_id = ctx.guild.id
+        guild_id = interaction.guild.id
         setting_key = list(kwargs.keys())[0]
         setting_value = list(kwargs.values())[0]
 
@@ -68,8 +62,8 @@ class Setup(commands.Cog):
                 await session.commit()
             
             logger.info(f"Updated setting '{setting_key}' for guild {guild_id}.")
-            await ctx.followup.send(f"✅ Successfully updated the **{setting_key.replace('_', ' ')}** to point to `{setting_value}`.", ephemeral=True)
+            await interaction.followup.send(f"✅ Successfully updated the **{setting_key.replace('_', ' ')}** to point to `{setting_value}`.", ephemeral=True)
 
         except Exception as e:
             logger.error(f"Failed to update setting for guild {guild_id}: {e}", exc_info=True)
-            await ctx.followup.send("❌ An error occurred while updating the setting. Please check the logs.", ephemeral=True)
+            await interaction.followup.send("❌ An error occurred while updating the setting. Please check the logs.", ephemeral=True)
